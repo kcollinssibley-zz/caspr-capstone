@@ -1,0 +1,5 @@
+#!/bin/sh
+
+./Facial_Rec.py &
+
+./Control_Node.py localhost 8080 &

@@ -1,0 +1,13 @@
+# Common files to ignore #
+
+*.class
+*.dll
+*.exe
+*.jar
+*.zip
+*.vs/*
+*.vscode/*
+*.log
+*.png
+*.jpg
+*.pyc
