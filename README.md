@@ -1,16 +1,9 @@
 # README #
 
-This document contains setup information as well as any possible dependancies 
+CASPR - Controlled Area Security and Personal Recognition. Completed as part of Northeastern's COE Senior Capstone.
 
-### What is this repository for? ###
 
-Code for facial recognition with applications to security, ticketing and data analytics 
-
-### How do I get set up? ###
-
-TBD
-
-### Contribution guidelines ###
-
-Write tests and specify there purpose in documentation
-Submit code for review and get at least 2 other approvals 
+## What is CASPR? ##
+- A modular system for facial recognition based security in controlled access areas
+- Primary, CASPR can be used as an entry security system for locations like stadiums, concert venues, airports, and more
+- CASPR is designed to function along side existing security gateways

@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 # Facial Recognition Control and Processing nodes.
 import argparse
-import lib.caspr_db as caspr_db
+import lib.caspr_db_backup as caspr_db
 import lib.caspr_sockets as caspr_sockets
 import cv2
+import face_recognition
 import numpy as np
 import os
 import pickle
@@ -17,10 +18,12 @@ q = Queue.Queue()
 server_name = "localhost"
 server_port = 12000
 
-image_path = "/home/kofi/Capstone/capstone/images"
+dir_ = os.getcwd()
+processed_image_path = os.path.join(dir_, 'images/processed')
+enrollment_image_path = os.path.join(dir_, 'images/enrollment')
 
 # Helper function to send a response to the camera module.
-def send_response(data):
+def send_response(x, data):
     data_string = pickle.dumps(data)
     sender_addr = data['sender_addr']
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -45,15 +48,13 @@ def send_server(server_address, data):
 
 
 # This will call into neural net
-def getID_NUM(image):
-    _face_cascade = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+def get_facial_encoding(image):
+    face_encodings = face_recognition.face_encodings(image)
+    if len(face_encodings) > 0:
+        return face_encodings[0]
+    
+    return None
 
-    faces = _face_cascade.detectMultiScale(gray, 1.3, 5)
-    for (x, y, w, h) in faces:
-        cv2.rectangle(image, (x,y), (x+w,y+h), (0,0,255), 2)
-
-    return len(faces)
 
 # Facial Recognition Processing Node:
 #   This node processes the given face image and returns result.
@@ -70,29 +71,47 @@ def facial_rec_processor(i, data):
     image = cv2.merge([r,g,b])
 
     image_name = guid + '_processed.png'
-    path = os.path.join(image_path, image_name)
+    path = os.path.join(processed_image_path, image_name)
     cv2.imwrite(path, image)
 
     # Get ID_NUM from image being tested.
-    ID_NUM = getID_NUM(image)
-    # Compare with images in database
-    Person = caspr_db.getPersonByID_NUM(ID_NUM)
+    face_encoding = get_facial_encoding(image)
 
+    face_found = False
     result = False
     name = None
-    if Person is not None:
-        name = Person.LastName + ", " + Person.FirstName
-        result = Person.Banned
-        caspr_db.postLog(Person.PersonID)
+    Person = None
+    if face_encoding is not None:
+        face_found = True
+
+        ID_NUMs = []
+        sq = caspr_db.getAllID_NUMs()
+        for person in sq:
+            ID_NUM = pickle.loads(person.ID_NUM)
+            ID_NUMs.append(ID_NUM)
+
+        match_results = face_recognition.compare_faces(ID_NUMs, face_encoding)
+        try:
+            index = match_results.index(True)
+            Person_ID_NUM = pickle.dumps(ID_NUMs[index])
+            Person = caspr_db.getPersonByID_NUM(Person_ID_NUM)
+        except Exception as e:
+            print str(e)
+
+        if Person is not None:
+            name = Person.LastName + ", " + Person.FirstName
+            result = Person.Banned
+            caspr_db.postLog(Person.PersonID, guid)
 
     results = dict(sender_addr=data['sender_addr'],
-        req_type='rsl',
+        req_type='rec_rsl',
         guid=guid,
         hwid=hwid,
         timestamp=timestamp,
-        face_found=True,
+        face_found=face_found,
         name=name,
         banned=result)
+
     result_buffer = pickle.dumps(results)
     send_server((server_name, server_port), result_buffer)
     return
@@ -103,18 +122,37 @@ def facial_rec_enrollment(i, data):
     firstName = data['first_name']
     lastName = data['last_name']
     banned = data['banned']
-    image = data['image']
+    image1 = data['image']
 
-    ### Need to crop image
+    # CV2 reads the red and blue channels in reverse
+    # Split and merge to reverse
+    b, g, r = cv2.split(image1)
+    image = cv2.merge([r,g,b])
 
-    ID_NUM = getID_NUM(image)
+    person_created = False
+    ID_NUM = None
+    ID_NUM = get_facial_encoding(image)
+    if ID_NUM is not None:
+        person_created = True
+        ID_Buffer = pickle.dumps(ID_NUM)
 
-    print "FRE: Saving image..."
-    image_name = lastName + firstName[0] + '.png'
-    path = os.path.join(image_path, image_name)
-    cv2.imwrite(path, image)
+        print "FRE: Saving image..."
+        image_name = lastName + firstName[0] + '.png'
+        path = os.path.join(enrollment_image_path, image_name)
+        cv2.imwrite(path, image)
 
-    caspr_db.postPerson(ID_NUM, path, banned, firstName, lastName)
+        caspr_db.postPerson(ID_Buffer, path, banned, firstName, lastName)
+        # Need to send response to camera here
+
+
+    results = dict(sender_addr=data['sender_addr'],
+        req_type='enr_rsl',
+        person_created=person_created,
+        first_name=firstName,
+        last_name=lastName)
+
+    result_buffer = pickle.dumps(results)
+    send_server((server_name, server_port), result_buffer)
     return
 
 
@@ -155,12 +193,13 @@ def facial_rec_control(args):
                     child = Process(target=facial_rec_processor, args=(0, data))
                     child.start()
 
-                if data['req_type'] == 'rsl': # Result to send
+                if data['req_type'] == 'rec_rsl' or data['req_type'] == 'enr_rsl': # Result to send
                     child_busy = False
                     print "FRC: Result received from processor."
                     # --------- Send response to module -----------
                     print "FRC: Sending response to module..."
-                    send_response(data)
+                    child = Process(target=send_response, args=(0, data))
+                    child.start()
 
                 if (not child_busy) and (not q.empty()):
                     print "FRC: Sending next request."
